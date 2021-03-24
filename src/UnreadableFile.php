@@ -17,9 +17,7 @@
 
 namespace Bitnix\Dotenv;
 
-use RuntimeException;
-
 /**
  * ...
  */
-class LoadFailure extends RuntimeException {}
+class UnreadableFile extends LoadFailure {}

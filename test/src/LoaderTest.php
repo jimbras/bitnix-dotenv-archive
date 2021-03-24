@@ -24,37 +24,49 @@ use PHPUnit\Framework\TestCase;
  */
 class LoaderTest extends TestCase {
 
-    private $loader = null;
+    private ?Loader $loader = null;
 
     public function setUp() : void {
-        $this->loader = new Loader();
+        $this->loader = new Loader(__DIR__ . '/_env');
     }
 
     public function testSyntaxError() {
-        $this->expectException(LoadFailure::CLASS);
-        $this->loader->require(__DIR__ . '/_env/.env.error.01');
+        $this->expectException(SyntaxError::CLASS);
+        $this->loader->require('.env.error.01');
     }
 
     public function testIncludeMissingFile() {
-        $this->assertNull($this->loader->include(__DIR__ . '/_env/.not_env'));
+        $this->assertNull($this->loader->include('.not_env'));
     }
 
     public function testRequireMissingFile() {
-        $this->expectException(LoadFailure::CLASS);
-        $this->loader->require(__DIR__ . '/_env/.not_env');
+        $this->expectException(FileNotFound::CLASS);
+        $this->loader->require('.not_env');
+    }
+
+    public function testUnreadableFile() {
+        $this->expectException(UnreadableFile::CLASS);
+
+        $file = __DIR__ . '/_env/.env';
+        \chmod($file, 0000);
+        try {
+            $this->loader->require('.env');
+        } finally {
+            \chmod($file, 0755);
+        }
     }
 
     public function testNonEmptyEnvFile() {
-        $env = $this->loader->require(__DIR__ . '/_env/.env');
+        $env = $this->loader->require('.env');
         $this->assertTrue(!empty($env));
 
-        $env = $this->loader->include(__DIR__ . '/_env/.env');
+        $env = $this->loader->include('.env');
         $this->assertTrue(!empty($env));
     }
 
     public function testEmptyEnvFile() {
-        $this->assertEquals([], $this->loader->require(__DIR__ . '/_env/.env.empty'));
-        $this->assertEquals([], $this->loader->include(__DIR__ . '/_env/.env.empty'));
+        $this->assertEquals([], $this->loader->require('.env.empty'));
+        $this->assertEquals([], $this->loader->include('.env.empty'));
     }
 
     public function testToString() {

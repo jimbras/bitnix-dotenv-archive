@@ -20,33 +20,14 @@ namespace Bitnix\Dotenv;
 use Bitnix\Parse\ParseFailure,
     PHPUnit\Framework\TestCase;
 
-/**
- * @version 0.1.0
- */
 class ParserTest extends TestCase {
 
     const FOO = 'foo allways bar';
 
-    private $parser = null;
+    private ?Parser $parser = null;
 
     public function setUp() : void {
         $this->parser = new Parser();
-    }
-
-    /**
-     * @dataProvider invalid
-     */
-    public function testParseError(string $file) {
-        $this->expectException(ParseFailure::CLASS);
-        $this->parser->parse(\file_get_contents(__DIR__ . '/_env/' . $file));
-    }
-
-    public function invalid() : array {
-        return [
-            ['.env.error.01'],
-            ['.env.error.02'],
-            ['.env.error.03']
-        ];
     }
 
     public function testParseEmpty() {
@@ -77,11 +58,29 @@ class ParserTest extends TestCase {
             'APP_CLASS_CONST' => self::FOO,
             'APP_SQ_STRING'   => 'this is \'a string',
             'APP_DQ_STRING'   => "this is \na \"string\"",
-            'APP_EXPORT'      => 'exported'
-        ], $this->parser->parse(\file_get_contents(__DIR__ . '/_env/.env')));
+            'APP_EXPORT'      => 'exported',
+            'APP_ENV_CONTEXT' => 'cool!!!'
+        ], $this->parser->parse(\file_get_contents(__DIR__ . '/_env/.env'), ['APP_CONTEXT' => 'cool!!!']));
+    }
+
+    /**
+     * @dataProvider invalid
+     */
+    public function testParseError(string $file) {
+        $this->expectException(ParseFailure::CLASS);
+        $this->parser->parse(\file_get_contents(__DIR__ . '/_env/' . $file));
+    }
+
+    public function invalid() : array {
+        return [
+            ['.env.error.01'],
+            ['.env.error.02'],
+            ['.env.error.03']
+        ];
     }
 
     public function testToString() {
         $this->assertIsString((string) $this->parser);
     }
+
 }

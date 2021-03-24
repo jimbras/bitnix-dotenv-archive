@@ -7,11 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2021-03-24
+Version 0.1.* abandoned...
+
+### Changed
+- PHP 8.0 required
+- Core api
+
 ## [0.1.2] - 2020-06-19
+### Added
 - Support for default interpolation values
 
 ## [0.1.1] - 2020-03-27
-- Bug fix: line continuation
+### Fixed
+- Line continuation bug
 
 ## [0.1.0] - 2020-03-06
 - First release

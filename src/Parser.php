@@ -17,7 +17,8 @@
 
 namespace Bitnix\Dotenv;
 
-use Bitnix\Parse\Lexer,
+use RuntimeException,
+    Bitnix\Parse\Lexer,
     Bitnix\Parse\ParseFailure,
     Bitnix\Parse\Lexer\Scanner,
     Bitnix\Parse\Lexer\State,
@@ -25,7 +26,7 @@ use Bitnix\Parse\Lexer,
     Bitnix\Parse\Lexer\TokenStream;
 
 /**
- * @version 0.1.0
+ * ...
  */
 final class Parser {
 
@@ -41,15 +42,17 @@ final class Parser {
     private const T_EOL          = 'T_EOL';
     private const T_EOS          = 'T_EOS';
 
-    private const MAIN_STATE = [
-        self::T_WHITESPACE => '\s+',
-        self::T_COMMENT    => '#[^\r\n]*',
-        self::T_EXPORT     => '\bexport\b',
+    private const MAIN_MATCH = [
         self::T_VAR_NAME   => '(?i)[a-z][a-z0-9_\.]*'
     ];
 
-    private const VALUE_STATE = [
-        self::T_COMMENT      => '[ \t]*#[^\r\n]*',
+    private const MAIN_SKIP = [
+        self::T_WHITESPACE => '\s+',
+        self::T_COMMENT    => '#[^\r\n]*',
+        self::T_EXPORT     => '\bexport\b'
+    ];
+
+    private const VALUE_MATCH = [
         self::T_ASSIGN       => '=',
         self::T_SINGLE_QUOTE => "'",
         self::T_DOUBLE_QUOTE => '"',
@@ -57,17 +60,21 @@ final class Parser {
         self::T_EOL          => '\r?\n'
     ];
 
-    private const SQ_STRING_STATE = [
+    private const VALUE_SKIP = [
+        self::T_COMMENT      => '[ \t]*#[^\r\n]*',
+    ];
+
+    private const SINGLE_QUOTED_STRING = [
         self::T_RAW_TEXT     => "([^'\\\\]|\\\\(')?)+",
         self::T_SINGLE_QUOTE => "'"
     ];
 
-    private const DQ_STRING_STATE = [
+    private const DOUBLE_QUOTED_STRING = [
         self::T_RAW_TEXT     => '([^"\\\\]|\\\\(")?)+',
         self::T_DOUBLE_QUOTE => '"'
     ];
 
-    private const BOOL_VALUES = [
+    private const BOOLEANS = [
         'true'  => true,
         'on'    => true,
         'yes'   => true,
@@ -75,6 +82,20 @@ final class Parser {
         'off'   => false,
         'no'    => false
     ];
+
+    private const SPECIAL_CHARS_SEARCH  = [
+        '\"', '\r', '\n', '\t'
+    ];
+
+    private const SPECIAL_CHARS_REPLACE = [
+        '"', "\r", "\n", "\t"
+    ];
+
+    private const NULL  = 'null';
+    private const EMPTY = '';
+
+    private const UNFOLD      = '~\\\\\r?\n\s+~';
+    private const INTERPOLATE = '~\$\{(([^:]*)\:\-([^}]*)|([^}]*))\}~';
 
     /**
      * @var Lexer
@@ -88,70 +109,69 @@ final class Parser {
 
     /**
      * ...
-     *
      */
     public function __construct() {
-        $this->main = new TokenSet(self::MAIN_STATE);
+        $pop = fn($stack) => $stack->pop();
 
-        $value = new TokenSet(self::VALUE_STATE);
-        $sqstr = new TokenSet(self::SQ_STRING_STATE);
-        $dqstr = new TokenSet(self::DQ_STRING_STATE);
+        $sqstr = new TokenSet(self::SINGLE_QUOTED_STRING, [], [
+            self::T_SINGLE_QUOTE => $pop
+        ]);
 
-        $skip = fn($state) => $state->skip();
-        $pop = fn($state) => $state->pop();
+        $dqstr = new TokenSet(self::DOUBLE_QUOTED_STRING, [], [
+            self::T_DOUBLE_QUOTE => $pop
+        ]);
 
-        $this->main
-            ->on(self::T_COMMENT, $skip)
-            ->on(self::T_WHITESPACE, $skip)
-            ->on(self::T_EXPORT, $skip)
-            ->on(self::T_VAR_NAME, fn($state) => $state->push($value));
+        $value = new TokenSet(self::VALUE_MATCH, self::VALUE_SKIP, [
+            self::T_EOL => $pop,
+            self::T_SINGLE_QUOTE => fn($stack) => $stack->push($sqstr),
+            self::T_DOUBLE_QUOTE => fn($stack) => $stack->push($dqstr)
+        ]);
 
-        $value
-            ->on(self::T_COMMENT, $skip)
-            ->on(self::T_EOL, $pop)
-            ->on(self::T_SINGLE_QUOTE, fn($state) => $state->push($sqstr))
-            ->on(self::T_DOUBLE_QUOTE, fn($state) => $state->push($dqstr));
+        $this->main = new TokenSet(self::MAIN_MATCH, self::MAIN_SKIP, [
+            self::T_VAR_NAME => fn($stack) => $stack->push($value)
+        ]);
 
-        $sqstr->on(self::T_SINGLE_QUOTE, $pop);
-        $dqstr->on(self::T_DOUBLE_QUOTE, $pop);
     }
 
     /**
      * @param string $content
+     * @param array $context
      * @return array
      * @throws ParseFailure
      * @throws RuntimeException
      */
-    public function parse(string $content) : array {
+    public function parse(string $content, array $context = []) : array {
         $env = [];
         try {
-            $this->lexer = new Scanner(new TokenStream($this->main, $content));
-            while (!$this->lexer->match(self::T_EOS)) {
+            $this->lexer = new Scanner(TokenStream::fromString($this->main, $content));
+            while ($this->lexer->valid()) {
+                $value = null;
 
                 $name = $this->lexer->demand(self::T_VAR_NAME)->lexeme();
                 $this->lexer->demand(self::T_ASSIGN);
 
-                $value = null;
-
                 if ($token = $this->lexer->consume(self::T_VAR_VALUE)) {
-                    $value = $this->value($token->lexeme(), true, false, $env);
+                    $value = $this->cast($token->lexeme());
+                    if (\is_string($value)) {
+                        $value = $this->interpolate($value, $env, $context);
+                    }
                 } else if ($this->lexer->consume(self::T_SINGLE_QUOTE)) {
                     $value = '';
                     while ($token = $this->lexer->consume(self::T_RAW_TEXT)) {
                         $value .= $token->lexeme();
                     }
                     $this->lexer->demand(self::T_SINGLE_QUOTE);
-                    $value = \str_replace("\'", "'", $this->value($value, false, false));
+                    $value = \str_replace("\'", "'", $value);
                 } else if ($this->lexer->consume(self::T_DOUBLE_QUOTE)) {
                     $value = '';
                     while ($token = $this->lexer->consume(self::T_RAW_TEXT)) {
                         $value .= $token->lexeme();
                     }
                     $this->lexer->demand(self::T_DOUBLE_QUOTE);
-                    $value = \str_replace(
-                        ['\"', '\r', '\n', '\t'],
-                        ['"', "\r", "\n", "\t"],
-                        $this->value($value, false, true, $env)
+                    $value = str_replace(
+                        self::SPECIAL_CHARS_SEARCH,
+                        self::SPECIAL_CHARS_REPLACE,
+                        $this->interpolate($this->unfold($value), $env, $context)
                     );
                 }
 
@@ -164,47 +184,53 @@ final class Parser {
         } finally {
             $this->lexer = null;
         }
-
         return $env;
     }
 
     /**
      * @param string $value
-     * @param bool $cast
-     * @param bool $unfold
-     * @param null|array $env
+     * @return string
+     */
+    private function unfold(string $value) : string {
+        return \preg_replace(self::UNFOLD, self::EMPTY, $value);
+    }
+
+    /**
+     * @param string $value
+     * @param array $env
+     * @param array $context
+     * @return string
+     */
+    private function interpolate(string $value, array $env, array $context) : string {
+        return \preg_replace_callback(self::INTERPOLATE, function($m) use ($env, $context) {
+            $value = $env[$m[1]] ?? $context[$m[1]] ?? null;
+            return \is_string($value) || \is_numeric($value) ? (string) $value : $m[3];
+        }, $value);
+    }
+
+    /**
+     * @param string $value
      * @return mixed
      */
-    private function value(string $value, bool $cast, bool $unfold, array $env = null) {
+    private function cast(string $value) : mixed {
+        $test = \strtolower($value);
 
-        if ($unfold && preg_match('~\r?\n~', $value)) {
-            $value = \preg_replace('~\\\\\r?\n\s+~', '', $value);
-        } else if ($cast) {
-            $test = \strtolower($value);
-
-            if ('null' === $test) {
-                return null;
-            } else if (isset(self::BOOL_VALUES[$test])) {
-                return self::BOOL_VALUES[$test];
-            } else if (\is_numeric($test)) {
-                $number = (int) $test;
-                if ($number == $test) {
-                    return $number;
-                }
-
-                $number = (float) $test;
-                if ($number == $test) {
-                    return $number;
-                }
-            } else if (\defined($value)) {
-                return \constant($value);
+        if (self::NULL === $test) {
+            return null;
+        } else if (isset(self::BOOLEANS[$test])) {
+            return self::BOOLEANS[$test];
+        } else if (\is_numeric($test)) {
+            $number = (int) $test;
+            if ($number == $test) {
+                return $number;
             }
-        }
 
-        if ($env) {
-            $value = \preg_replace_callback('~\$\{(([^:]*)\:\-([^}]*)|([^}]*))\}~', function($m) use ($env) {
-                return $env[$m[1]] ?? $m[3];
-            }, $value);
+            $number = (float) $test;
+            if ($number == $test) {
+                return $number;
+            }
+        } else if (\defined($value)) {
+            return \constant($value);
         }
 
         return $value;

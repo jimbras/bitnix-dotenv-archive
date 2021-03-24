@@ -17,13 +17,17 @@
 
 namespace Bitnix\Dotenv;
 
-use Throwable,
-    Bitnix\Parse\ParseFailure;
+use Bitnix\Parse\ParseFailure;
 
 /**
- * @version 0.1.0
+ * ...
  */
 final class Loader {
+
+    /**
+     * @var string
+     */
+    private string $root;
 
     /**
      * @var Parser
@@ -31,65 +35,67 @@ final class Loader {
     private ?Parser $parser = null;
 
     /**
+     * @param string $root
+     */
+    public function __construct(string $root) {
+        $this->root = $root;
+    }
+
+    /**
      * @param string $file
+     * @param array $env
      * @return array
      * @throws LoadFailure
-     * @throws RuntimeException
      */
-    public function require(string $file) : array {
-        return $this->load($file);
+    public function require(string $file, array $env = []) : array {
+        $parsed = $this->include($file, $env);
+        if (null === $parsed) {
+            throw new FileNotFound(\sprintf(
+                'Failed to find dotenv file: %s', $file
+            ));
+        }
+        return $parsed;
     }
 
     /**
      * @param string $file
+     * @param array $env
      * @return null|array
      * @throws LoadFailure
-     * @throws RuntimeException
      */
-    public function include(string $file) : ?array {
-        return $this->load($file, false);
-    }
+    public function include(string $file, array $env = []) : ?array {
+        $file = $this->root . \DIRECTORY_SEPARATOR . $file;
 
-    /**
-     * @param string $file
-     * @param bool $required
-     * @return null|array
-     * @throws LoadFailure
-     * @throws RuntimeException
-     */
-    private function load(string $file, bool $required = true) : ?array {
-
-        if (\is_file($file) && \is_readable($file)) {
-            $file = \realpath($file);
-            $contents = \trim(\file_get_contents($file));
-
-            if ('' === $contents) {
-                return [];
-            }
-
-            if (null === $this->parser) {
-                $this->parser = new Parser();
-            }
-
-            try {
-                return $this->parser->parse($contents);
-            } catch (ParseFailure $pf) {
-                throw new LoadFailure(\sprintf(
-                    'Failed to parse env file "%s"%s%s',
-                        $file,
-                        \PHP_EOL,
-                        (string) $pf
-                ));
-            }
+        if (!\is_file($file)) {
+            return null;
         }
 
-        if ($required) {
-            throw new LoadFailure(\sprintf(
-                'Unable to find dotenv file "%s"', $file
+        if (!\is_readable($file)) {
+            throw new UnreadableFile(\sprintf(
+                'Failed to read dotenv file: %s', $file
             ));
         }
 
-        return null;
+        $content = \trim(\file_get_contents($file));
+
+        if ('' === $content) {
+            return [];
+        }
+
+        $this->parser ??= new Parser();
+
+        try {
+            $parsed = $this->parser->parse($content, $env);
+        } catch (ParseFailure $x) {
+            throw new SyntaxError(\sprintf(
+                'Failed to parse dotenv file "%s"%s%s',
+                    $file,
+                    \PHP_EOL,
+                    (string) $x
+            ));
+        }
+
+        return $parsed;
     }
 
     /**
