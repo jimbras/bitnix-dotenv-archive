@@ -1,1 +1,3 @@
 # Bitnix Dotenv #
+
+This packaged reached the end of it's life...
